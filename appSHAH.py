@@ -1,17 +1,18 @@
 import streamlit as st
 import pandas as pd
+import sqlite3
 import datetime
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 import io
 
-# Set page config
+# Page Config
 st.set_page_config(
     page_title="Shah Cement - Production & Downtime Tracking System",
     page_icon="🏭",
     layout="wide"
 )
 
-# Custom Styling for Branding & Dashboard UI
+# Custom Branding CSS
 st.markdown("""
 <style>
     .brand-header {
@@ -44,99 +45,79 @@ st.markdown("""
         font-weight: 500;
         font-style: italic;
     }
-    .card-metric {
-        background-color: #FFFFFF;
-        border: 1px solid #E2E8F0;
-        border-radius: 10px;
-        padding: 18px;
-        text-align: center;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-    .card-title {
-        color: #64748B;
-        font-size: 13px;
-        font-weight: 600;
-        text-transform: uppercase;
-        margin-bottom: 5px;
-    }
-    .card-value {
-        color: #1E293B;
-        font-size: 24px;
-        font-weight: 700;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize Session States
-if 'users' not in st.session_state:
-    st.session_state.users = {
-        'viewer': {'password': 'view123', 'role': 'Viewer', 'name': 'General Viewer'},
-        'operator': {'password': 'op123', 'role': 'Operator', 'name': 'Machine Operator'},
-        'admin': {'password': 'admin123', 'role': 'Admin', 'name': 'Plant Manager'},
-        'creator': {'password': 'creator123', 'role': 'Creator', 'name': 'System Developer'}
-    }
+# --- DATABASE SETUP (SQLite) ---
+def get_db_connection():
+    conn = sqlite3.connect('scil_downtime.db', check_same_thread=False)
+    return conn
 
-if 'authenticated' not in st.session_state:
-    st.session_state.authenticated = False
-if 'user_role' not in st.session_state:
-    st.session_state.user_role = None
-if 'username' not in st.session_state:
-    st.session_state.username = None
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS downtime_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prod_date TEXT,
+            start_time TEXT,
+            end_time TEXT,
+            duration INTEGER,
+            shift TEXT,
+            equipment TEXT,
+            category TEXT,
+            reason TEXT,
+            entry_person TEXT,
+            logged_by TEXT,
+            status TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
-# Helper Functions
+init_db()
 
+# 3-Year Retention Logic
+def load_and_purge_data():
+    conn = get_db_connection()
+    df = pd.read_sql("SELECT * FROM downtime_logs", conn)
+    
+    if not df.empty:
+        df['temp_date'] = pd.to_datetime(df['prod_date'], errors='coerce')
+        cutoff_date = datetime.now() - timedelta(days=1095) # 3 Years
+        
+        old_ids = df[df['temp_date'] < cutoff_date]['id'].tolist()
+        if old_ids:
+            cursor = conn.cursor()
+            cursor.execute(f"DELETE FROM downtime_logs WHERE id IN ({','.join(map(str, old_ids))})")
+            conn.commit()
+            df = df[df['temp_date'] >= cutoff_date]
+            
+        df = df.drop(columns=['temp_date'])
+    conn.close()
+    return df
 
-def auto_purge_old_data(df, retention_days=1095):  # 3 Years Retention
-    if df.empty:
-        return df
-    temp_df = df.copy()
-    temp_df['temp_date'] = pd.to_datetime(
-        temp_df['Production Date'], errors='coerce')
-    cutoff_date = datetime.now() - timedelta(days=retention_days)
-    filtered_df = temp_df[temp_df['temp_date'] >=
-                          cutoff_date].drop(columns=['temp_date'])
-    return filtered_df
-
-
-if 'downtime_data' not in st.session_state:
-    initial_data = pd.DataFrame([
-        {
-            "ID": 1,
-            "Production Date": "2026-09-16",
-            "Start Time": "2026-09-16 08:30 AM",
-            "End Time": "2026-09-16 09:45 AM",
-            "Duration (Mins)": 75,
-            "Shift": "A Shift",
-            "Equipment": "BM1 Polycom M1",
-            "Breakdown Category": "Mechanical",
-            "Reason / Description": "Hydraulic Pressure Loss",
-            "Entry Person (Operator/Engr)": "Engr. Shaed",
-            "Logged By": "operator",
-            "Status": "Closed"
-        }
-    ])
-    st.session_state.downtime_data = auto_purge_old_data(initial_data)
-
-
+# --- SHIFT & PRODUCTION DAY CALCULATION ---
 def get_production_day_and_shift(dt_obj):
     hour = dt_obj.hour
+    
+    # Production Day: 6 AM to 6 AM
     if hour < 6:
         prod_date = dt_obj.date() - timedelta(days=1)
     else:
         prod_date = dt_obj.date()
-
+        
+    # Shift Logic: A (6-14), B (14-22), C (22-6)
     if 6 <= hour < 14:
         shift = "A Shift"
     elif 14 <= hour < 22:
         shift = "B Shift"
     else:
         shift = "C Shift"
-
+        
     return prod_date.strftime("%Y-%m-%d"), shift
 
-# HEADER BANNER
-
-
+# Header Render
 def render_header():
     st.markdown("""
         <div class="brand-header">
@@ -146,122 +127,81 @@ def render_header():
         </div>
     """, unsafe_allow_html=True)
 
-
-# LOGIN SCREEN
-if not st.session_state.authenticated:
-    render_header()
-    col1, _ = st.columns([1, 1])
-    with col1:
-        st.subheader("🔒 Secure System Login")
-        with st.form("login_form"):
-            input_username = st.text_input("Username")
-            input_password = st.text_input("Password", type="password")
-            submit = st.form_submit_button("Login")
-
-            if submit:
-                user_info = st.session_state.users.get(input_username.lower())
-                if user_info and user_info['password'] == input_password:
-                    st.session_state.authenticated = True
-                    st.session_state.user_role = user_info['role']
-                    st.session_state.username = input_username.lower()
-                    st.rerun()
-                else:
-                    st.error("Invalid Username or Password!")
-    st.stop()
-
-# MAIN INTERFACE
 render_header()
 
-# SIDEBAR
-st.sidebar.title(
-    f"👤 {st.session_state.users[st.session_state.username]['name']}")
-st.sidebar.caption(f"Role: **{st.session_state.user_role}**")
-
-if st.sidebar.button("🚪 Logout"):
-    st.session_state.authenticated = False
-    st.rerun()
-
-menu = ["📝 Downtime Entry", "📊 Dashboard & Analytics",
-        "📜 Breakdown History", "📑 Shift-wise Report", "📥 Excel Export"]
-choice = st.sidebar.radio("Go to Section", menu)
-
+# EQUIPMENT LIST (Updated VRM M1 and M2)
 EQUIPMENT_LIST = [
     "BM1", "BM1 Polycom M1", "BM1 Polycom M2",
     "BM2", "BM3", "BM4", "BM4 Roller Press M1", "BM4 Roller Press M2",
-    "VRM", "Packer 1", "Packer 2", "Packer 3", "Packer 4", "Packer 5",
+    "VRM M1", "VRM M2",
+    "Packer 1", "Packer 2", "Packer 3", "Packer 4", "Packer 5",
     "Packer 6", "Packer 7", "Packer 8", "Packer 9",
     "E-Crane 1", "E-Crane 2", "E-Crane 3", "E-Crane 4", "E-Crane 5", "E-Crane 6", "E-Crane 7",
     "X-Crane", "Z-Crane"
 ]
 
-# DOWNTIME ENTRY FORM
+menu = ["📝 Downtime Entry", "📊 Dashboard & Analytics", "📜 Breakdown History", "📑 Shift-wise Report", "📥 Excel Export"]
+choice = st.sidebar.radio("Go to Section", menu)
+
+# --- DOWNTIME ENTRY FORM ---
 if choice == "📝 Downtime Entry":
     st.subheader("📝 New Downtime Event Logging")
-    st.caption(
-        "ℹ️ *Note: System automatically retains downtime logs for 3 years.*")
-
+    st.caption("ℹ️ *Production Day: 6 AM to 6 AM | Shift A (6 AM-2 PM), Shift B (2 PM-10 PM), Shift C (10 PM-6 AM)*")
+    
     with st.form("downtime_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
-
+        
         with col1:
-            equipment = st.selectbox(
-                "Select Equipment / Machine", EQUIPMENT_LIST)
+            equipment = st.selectbox("Select Equipment / Machine", EQUIPMENT_LIST)
             start_date = st.date_input("Start Date", datetime.now().date())
-            start_time_val = st.time_input("Start Time", datetime.now().time())
-            category = st.selectbox("Breakdown Category", [
-                                    "Mechanical", "Electrical", "Process", "Instrumentation", "Operational", "Power Outage"])
-            entry_person = st.text_input(
-                "Operator / Shift Engineer Name", placeholder="e.g. Engr. Shaed / Operator Kabir")
-
+            start_time_val = st.time_input("Start Time (12-hour AM/PM)", datetime.now().time())
+            category = st.selectbox("Breakdown Category", ["Mechanical", "Electrical", "Process", "Instrumentation", "Operational", "Power Outage"])
+            entry_person = st.text_input("Operator / Shift Engineer Name", placeholder="e.g. Engr. Shaed / Operator Kabir")
+            
         with col2:
             status = st.selectbox("Status", ["Closed", "Ongoing"])
             if status == "Closed":
                 end_date = st.date_input("End Date", datetime.now().date())
-                end_time_val = st.time_input("End Time", datetime.now().time())
-
+                end_time_val = st.time_input("End Time (12-hour AM/PM)", datetime.now().time())
+            
             reason = st.text_area("Reason / Description of Failure")
-
+            
         submit_btn = st.form_submit_button("Submit Downtime Log")
-
+        
         if submit_btn:
             if not entry_person.strip():
                 st.error("Please enter the Operator or Shift Engineer's name!")
             else:
                 start_dt = datetime.combine(start_date, start_time_val)
                 prod_date, auto_shift = get_production_day_and_shift(start_dt)
-
+                
                 duration_mins = 0
                 end_str = "ONGOING"
                 if status == "Closed":
                     end_dt = datetime.combine(end_date, end_time_val)
-                    duration_mins = int(
-                        (end_dt - start_dt).total_seconds() / 60)
+                    duration_mins = int((end_dt - start_dt).total_seconds() / 60)
                     end_str = end_dt.strftime("%Y-%m-%d %I:%M %p")
+                
+                # Insert into SQLite DB
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO downtime_logs (prod_date, start_time, end_time, duration, shift, equipment, category, reason, entry_person, logged_by, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (prod_date, start_dt.strftime("%Y-%m-%d %I:%M %p"), end_str, duration_mins, auto_shift, equipment, category, reason, entry_person, "Operator", status))
+                
+                conn.commit()
+                conn.close()
+                
+                st.success(f"✅ Logged successfully! Production Day: **{prod_date}**, Shift: **{auto_shift}**, Operator: **{entry_person}**")
 
-                new_entry = {
-                    "ID": len(st.session_state.downtime_data) + 1,
-                    "Production Date": prod_date,
-                    "Start Time": start_dt.strftime("%Y-%m-%d %I:%M %p"),
-                    "End Time": end_str,
-                    "Duration (Mins)": duration_mins,
-                    "Shift": auto_shift,
-                    "Equipment": equipment,
-                    "Breakdown Category": category,
-                    "Reason / Description": reason,
-                    "Entry Person (Operator/Engr)": entry_person,
-                    "Logged By": st.session_state.username,
-                    "Status": status
-                }
+# --- BREAKDOWN HISTORY & REPORTS ---
+elif choice == "📜 Breakdown History":
+    st.subheader("📜 Maintenance Log & Breakdown History")
+    df = load_and_purge_data()
+    st.dataframe(df, use_container_width=True)
 
-                # Append new record and apply auto-purge rule
-                st.session_state.downtime_data = pd.concat(
-                    [st.session_state.downtime_data, pd.DataFrame([new_entry])], ignore_index=True)
-                st.session_state.downtime_data = auto_purge_old_data(
-                    st.session_state.downtime_data)
-
-                st.success(f"✅ Logged successfully by **{entry_person}**!")
-
-# FOOTER
+# Footer
 st.markdown("""
     <div style="text-align: center; padding: 20px; color: #64748B; font-size: 13px; border-top: 1px solid #E2E8F0; margin-top: 40px;">
         © Shah Cement Industries Limited | ⚡ Developed by SCIL ELECTRICAL
