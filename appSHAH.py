@@ -185,14 +185,7 @@ if not st.session_state.authenticated:
                 else:
                     st.error("Invalid Username or Password!")
                     
-    with col2:
-        st.info("""
-        **Default Login Credentials:**
-        - **Viewer:** `viewer` / `view123`
-        - **Operator:** `operator` / `op123`
-        - **Admin:** `admin` / `admin123`
-        - **Creator:** `creator` / `creator123`
-        """)
+
     st.stop()
 
 # MAIN INTERFACE (Logged In)
