@@ -3,7 +3,6 @@ import pandas as pd
 import sqlite3
 import datetime
 from datetime import datetime, timedelta
-import io
 
 # Page Config
 st.set_page_config(
@@ -48,7 +47,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- DATABASE SETUP (SQLite) ---
+# Database Setup
 def get_db_connection():
     conn = sqlite3.connect('scil_downtime.db', check_same_thread=False)
     return conn
@@ -77,7 +76,7 @@ def init_db():
 
 init_db()
 
-# 3-Year Retention Logic
+# Auto Purge Data (>3 Years)
 def load_and_purge_data():
     conn = get_db_connection()
     df = pd.read_sql("SELECT * FROM downtime_logs", conn)
@@ -97,7 +96,7 @@ def load_and_purge_data():
     conn.close()
     return df
 
-# --- SHIFT & PRODUCTION DAY CALCULATION ---
+# Production Day & Shift Calculation
 def get_production_day_and_shift(dt_obj):
     hour = dt_obj.hour
     
@@ -107,7 +106,7 @@ def get_production_day_and_shift(dt_obj):
     else:
         prod_date = dt_obj.date()
         
-    # Shift Logic: A (6-14), B (14-22), C (22-6)
+    # Shift Logic: A (6 AM-2 PM), B (2 PM-10 PM), C (10 PM-6 AM)
     if 6 <= hour < 14:
         shift = "A Shift"
     elif 14 <= hour < 22:
@@ -118,18 +117,14 @@ def get_production_day_and_shift(dt_obj):
     return prod_date.strftime("%Y-%m-%d"), shift
 
 # Header Render
-def render_header():
-    st.markdown("""
-        <div class="brand-header">
-            <div class="brand-title">SHAH CEMENT INDUSTRIES LIMITED</div>
-            <div class="brand-subtitle">Production & Downtime Tracking System (DTA App)</div>
-            <div class="developer-tag">⚡ Developed by SCIL ELECTRICAL</div>
-        </div>
-    """, unsafe_allow_html=True)
+st.markdown("""
+    <div class="brand-header">
+        <div class="brand-title">SHAH CEMENT INDUSTRIES LIMITED</div>
+        <div class="brand-subtitle">Production & Downtime Tracking System (DTA App)</div>
+        <div class="developer-tag">⚡ Developed by SCIL ELECTRICAL</div>
+    </div>
+""", unsafe_allow_html=True)
 
-render_header()
-
-# EQUIPMENT LIST (Updated VRM M1 and M2)
 EQUIPMENT_LIST = [
     "BM1", "BM1 Polycom M1", "BM1 Polycom M2",
     "BM2", "BM3", "BM4", "BM4 Roller Press M1", "BM4 Roller Press M2",
@@ -140,13 +135,12 @@ EQUIPMENT_LIST = [
     "X-Crane", "Z-Crane"
 ]
 
-menu = ["📝 Downtime Entry", "📊 Dashboard & Analytics", "📜 Breakdown History", "📑 Shift-wise Report", "📥 Excel Export"]
+menu = ["📝 Downtime Entry", "📜 Breakdown History"]
 choice = st.sidebar.radio("Go to Section", menu)
 
-# --- DOWNTIME ENTRY FORM ---
 if choice == "📝 Downtime Entry":
     st.subheader("📝 New Downtime Event Logging")
-    st.caption("ℹ️ *Production Day: 6 AM to 6 AM | Shift A (6 AM-2 PM), Shift B (2 PM-10 PM), Shift C (10 PM-6 AM)*")
+    st.caption("ℹ️ *Production Day: 6:00 AM to 6:00 AM | Time format: 12-Hour AM/PM*")
     
     with st.form("downtime_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -154,15 +148,20 @@ if choice == "📝 Downtime Entry":
         with col1:
             equipment = st.selectbox("Select Equipment / Machine", EQUIPMENT_LIST)
             start_date = st.date_input("Start Date", datetime.now().date())
-            start_time_val = st.time_input("Start Time (12-hour AM/PM)", datetime.now().time())
+            
+            # 12-Hour AM/PM Time Input
+            start_time_val = st.time_input("Start Time (hh:mm AM/PM)", datetime.now().time())
+            
             category = st.selectbox("Breakdown Category", ["Mechanical", "Electrical", "Process", "Instrumentation", "Operational", "Power Outage"])
             entry_person = st.text_input("Operator / Shift Engineer Name", placeholder="e.g. Engr. Shaed / Operator Kabir")
             
         with col2:
             status = st.selectbox("Status", ["Closed", "Ongoing"])
+            
             if status == "Closed":
                 end_date = st.date_input("End Date", datetime.now().date())
-                end_time_val = st.time_input("End Time (12-hour AM/PM)", datetime.now().time())
+                # 12-Hour AM/PM Time Input
+                end_time_val = st.time_input("End Time (hh:mm AM/PM)", datetime.now().time())
             
             reason = st.text_area("Reason / Description of Failure")
             
@@ -175,27 +174,29 @@ if choice == "📝 Downtime Entry":
                 start_dt = datetime.combine(start_date, start_time_val)
                 prod_date, auto_shift = get_production_day_and_shift(start_dt)
                 
+                # Format start time in 12-hour AM/PM format
+                formatted_start = start_dt.strftime("%Y-%m-%d %I:%M %p")
+                
                 duration_mins = 0
-                end_str = "ONGOING"
+                formatted_end = "ONGOING"
                 if status == "Closed":
                     end_dt = datetime.combine(end_date, end_time_val)
                     duration_mins = int((end_dt - start_dt).total_seconds() / 60)
-                    end_str = end_dt.strftime("%Y-%m-%d %I:%M %p")
+                    formatted_end = end_dt.strftime("%Y-%m-%d %I:%M %p")
                 
-                # Insert into SQLite DB
+                # Database Insert
                 conn = get_db_connection()
                 cursor = conn.cursor()
                 cursor.execute('''
                     INSERT INTO downtime_logs (prod_date, start_time, end_time, duration, shift, equipment, category, reason, entry_person, logged_by, status)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (prod_date, start_dt.strftime("%Y-%m-%d %I:%M %p"), end_str, duration_mins, auto_shift, equipment, category, reason, entry_person, "Operator", status))
+                ''', (prod_date, formatted_start, formatted_end, duration_mins, auto_shift, equipment, category, reason, entry_person, "Operator", status))
                 
                 conn.commit()
                 conn.close()
                 
-                st.success(f"✅ Logged successfully! Production Day: **{prod_date}**, Shift: **{auto_shift}**, Operator: **{entry_person}**")
+                st.success(f"✅ Downtime Logged! Start: **{formatted_start}** | End: **{formatted_end}** | Duration: **{duration_mins} Mins**")
 
-# --- BREAKDOWN HISTORY & REPORTS ---
 elif choice == "📜 Breakdown History":
     st.subheader("📜 Maintenance Log & Breakdown History")
     df = load_and_purge_data()
