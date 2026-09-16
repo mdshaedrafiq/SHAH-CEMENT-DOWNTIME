@@ -151,7 +151,7 @@ def render_header():
 if 'users' not in st.session_state:
     st.session_state.users = {
         'viewer': {'password': 'view123', 'role': 'Viewer', 'name': 'General Viewer'},
-        'operator': {'password': 'op123', 'role': 'Operator', 'name': 'Machine Operator'},
+        'operator/engineer': {'password': 'op123', 'role': 'Operator', 'name': 'Machine Operator/Shift engineer'},
         'admin': {'password': 'admin123', 'role': 'Admin', 'name': 'Plant Manager'},
         'creator': {'password': 'creator123', 'role': 'Creator', 'name': 'System Developer'}
     }
