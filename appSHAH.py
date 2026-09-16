@@ -236,7 +236,10 @@ if choice == "📝 Downtime Entry":
         with col1:
             equipment = st.selectbox("Select Equipment / Machine", EQUIPMENT_LIST)
             start_date = st.date_input("Start Date", datetime.now().date())
-            start_time_val = st.time_input("Start Time (12-hour AM/PM)", datetime.now().time())
+            
+           
+            start_time_val = st.time_input("Start Time", value=datetime.now().time(), step=60)
+            
             category = st.selectbox("Breakdown Category", ["Mechanical", "Electrical", "Process", "Instrumentation", "Operational", "Power Outage"])
             entry_person = st.text_input("Operator / Shift Engineer Name", placeholder="e.g. Engr. Shaed / Operator Kabir")
             
@@ -244,7 +247,8 @@ if choice == "📝 Downtime Entry":
             status = st.selectbox("Status", ["Closed", "Ongoing"])
             if status == "Closed":
                 end_date = st.date_input("End Date", datetime.now().date())
-                end_time_val = st.time_input("End Time (12-hour AM/PM)", datetime.now().time())
+              
+                end_time_val = st.time_input("End Time", value=datetime.now().time(), step=60)
             
             reason = st.text_area("Reason / Description of Failure")
             
@@ -254,6 +258,7 @@ if choice == "📝 Downtime Entry":
             if not entry_person.strip():
                 st.error("Please enter the Operator or Shift Engineer's name!")
             else:
+
                 start_dt = datetime.combine(start_date, start_time_val)
                 prod_date, auto_shift = get_production_day_and_shift(start_dt)
                 
@@ -262,7 +267,7 @@ if choice == "📝 Downtime Entry":
                 if status == "Closed":
                     end_dt = datetime.combine(end_date, end_time_val)
                     duration_mins = int((end_dt - start_dt).total_seconds() / 60)
-                    end_str = end_dt.strftime("%Y-%m-%d %I:%M %p")
+                    end_str = end_dt.strftime("%Y-%m-%d %I:%M %p") 
                 
                 # Insert into SQLite DB
                 conn = get_db_connection()
@@ -275,7 +280,8 @@ if choice == "📝 Downtime Entry":
                 conn.commit()
                 conn.close()
                 
-                st.success(f"✅ Logged successfully! Production Day: **{prod_date}**, Shift: **{auto_shift}**, Operator: **{entry_person}**")
+                st.success(f"✅ Logged successfully! Production Day: **{prod_date}**, Shift: **{auto_shift}**, Time: **{start_dt.strftime('%I:%M %p')}**")
+
 
 # --- 2. DASHBOARD & ANALYTICS ---
 elif choice == "📊 Dashboard & Analytics":
